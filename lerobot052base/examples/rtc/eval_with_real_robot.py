@@ -88,6 +88,22 @@ Usage:
         --rtc.max_guidance_weight=5.0 \
         --rtc.prefix_attention_schedule=LINEAR \
         --device=cuda
+
+
+    python /home/stouching/Desktop/lerobot_v1/LeRobot_with_Piper-main/examples/rtc/eval_with_real_robot.py \
+    --policy.path=/home/stouching/Desktop/lerobot_v1/4_17_train_expert_only/checkpoints/001000/pretrained_model \
+    --policy.device=cuda \
+    --policy.dtype=bfloat16 \
+    --rtc.enabled=true \
+    --rtc.execution_horizon=70 \
+    --rtc.prefix_attention_schedule=EXP \
+    --robot.type=piper_follower \
+    --robot.can_interface=can_follower \
+    --robot.cameras='{top: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30, warmup_s: 10}, wrist: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30, warmup_s: 10}}' \
+    --task="Pick up the white box and place it in the cardboard box beside it.\n" \
+    --duration=300 \
+    --action_queue_size_to_get_new_actions=50 \
+    --fps=30
 """
 
 import logging
