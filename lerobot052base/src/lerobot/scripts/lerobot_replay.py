@@ -39,6 +39,13 @@ lerobot-replay \
   --dataset.episode=0
 ```
 
+
+lerobot-replay \
+    --robot.type=piper_follower \
+    --robot.can_port=can_follower \
+    --dataset.repo_id=pi0/dataset \
+    --dataset.root=/home/stouching/vla/repo/dataset/test1 \
+    --dataset.episode=0
 """
 
 import logging

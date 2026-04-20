@@ -16,7 +16,71 @@
 """Train a policy.
 
 Requires: pip install 'lerobot[training]'  (includes dataset + accelerate + wandb extras)
-"""
+
+
+lerobot-train \
+    --policy.pretrained_path=/home/stouching/Desktop/lerobot_v1/pi0_base/pi0_base_weight \
+    --dataset.repo_id=pi0/dataset \
+    --dataset.root=/home/stouching/vla/repo/dataset/test1 \
+    --policy.push_to_hub=false \
+    --policy.type=pi0 \
+    --policy.empty_cameras=1 \
+    --policy.device=cuda \
+    --policy.dtype=bfloat16 \
+    --policy.train_expert_only=true \
+    --output_dir=/home/stouching/Desktop/lerobot_v1/4_20_train_expert_only \
+    --job_name=pi0_piper_pick_box \
+    --wandb.enable=true \
+    --wandb.project=vla \
+    --wandb.entity=zhangchengang2001-southe\
+    --wandb.notes="Pi0 action expert only fine-tuning on pick box task" \
+    --steps=5000 \
+    --batch_size=4 \
+    --save_freq=2500 \
+    --log_freq=100 \
+    --eval_freq=5000 \
+    --optimizer.type=adamw \
+    --optimizer.lr=2.5e-5 \
+    --optimizer.weight_decay=0.01 \
+    --policy.scheduler_warmup_steps=500 \
+    --policy.scheduler_decay_steps=5000 \
+    --policy.scheduler_decay_lr=1e-6 \
+    --seed=42 \
+    --num_workers=8
+
+    lerobot-train --policy.pretrained_path=/home/stouching/Desktop/lerobot_v1/pi0_base/pi0_base_weight --dataset.repo_id=pi0/dataset --dataset.root=/home/stouching/vla/repo/dataset/test1 --policy.push_to_hub=false --policy.type=pi0 --policy.empty_cameras=1 --policy.device=cuda --policy.dtype=bfloat16 --policy.train_expert_only=true --output_dir=/home/stouching/Desktop/lerobot_v1/4_20_train_expert_only --job_name=pi0_piper_pick_box --wandb.enable=true --wandb.project=vla --wandb.entity=zhangchengang2001-southe --wandb.notes="Pi0 action expert only fine-tuning on pick box task" --steps=5000 --batch_size=4 --save_freq=2500 --log_freq=100 --eval_freq=5000 --optimizer.type=adamw --optimizer.lr=2.5e-5 --optimizer.weight_decay=0.01 --policy.scheduler_warmup_steps=500 --policy.scheduler_decay_steps=5000 --policy.scheduler_decay_lr=1e-6 --seed=42 --num_workers=8
+
+lerobot-train \
+    --policy.pretrained_path=/home/stouching/Desktop/lerobot_v1/pi0_base/pi0_base_weight \
+    --dataset.repo_id=pi0/dataset \
+    --dataset.root=/home/stouching/vla/repo/dataset/test1 \
+    --policy.push_to_hub=false \
+    --policy.type=pi0 \
+    --policy.empty_cameras=1 \
+    --policy.device=cuda \
+    --policy.dtype=bfloat16 \
+    --policy.train_expert_only=true \
+    --output_dir=/home/stouching/Desktop/lerobot_v1/4_20_train_16k \
+    --job_name=pi0_piper_pick_box_16k \
+    --wandb.enable=true \
+    --wandb.project=vla \
+    --wandb.entity=zhangchengang2001-southe \
+    --wandb.notes="Pi0 expert fine-tuning 16k steps bs4 lr1.25e-5" \
+    --steps=16000 \
+    --batch_size=4 \
+    --save_freq=4000 \
+    --log_freq=100 \
+    --eval_freq=16000 \
+    --optimizer.type=adamw \
+    --optimizer.lr=1.25e-5 \
+    --optimizer.weight_decay=0.01 \
+    --policy.scheduler_warmup_steps=1000 \
+    --policy.scheduler_decay_steps=30000 \
+    --policy.scheduler_decay_lr=2.5e-6 \
+    --seed=42 \
+    --num_workers=8
+
+lerobot-train --policy.pretrained_path=/home/stouching/Desktop/lerobot_v1/pi0_base/pi0_base_weight --dataset.repo_id=pi0/dataset --dataset.root=/home/stouching/vla/repo/dataset/test1 --policy.push_to_hub=false --policy.type=pi0 --policy.empty_cameras=1 --policy.device=cuda --policy.dtype=bfloat16 --policy.train_expert_only=true --output_dir=/home/stouching/Desktop/lerobot_v1/4_20_train_16k --job_name=pi0_piper_pick_box_16k --wandb.enable=true --wandb.project=vla --wandb.entity=zhangchengang2001-southe --wandb.notes="Pi0 expert fine-tuning 16k steps bs4 lr1.25e-5" --steps=16000 --batch_size=4 --save_freq=4000 --log_freq=100 --eval_freq=16000 --optimizer.type=adamw --optimizer.lr=1.25e-5 --optimizer.weight_decay=0.01 --policy.scheduler_warmup_steps=1000 --policy.scheduler_decay_steps=30000 --policy.scheduler_decay_lr=2.5e-6 --seed=42 --num_workers=8    """
 
 import dataclasses
 import logging

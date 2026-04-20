@@ -271,11 +271,11 @@ class PiperFollower(Robot):
                     target_rad = clipped
 
                 # Convert radians -> 0.001 degrees (SDK unit)
-                target_sdk = int(round(target_rad * RAD_TO_DEG * 1000))
+                target_sdk = int(round(float(target_rad) * RAD_TO_DEG * 1000))
                 joint_targets.append(target_sdk)
             else:
                 # Use cached last position
-                target_sdk = int(round(self._last_joint_positions[idx] * RAD_TO_DEG * 1000))
+                target_sdk = int(round(float(self._last_joint_positions[idx]) * RAD_TO_DEG * 1000))
                 joint_targets.append(target_sdk)
 
         # 2. Extract and convert gripper target (meters -> SDK units: 0.001 mm)
@@ -287,7 +287,7 @@ class PiperFollower(Robot):
                 min_m, max_m = self.config.joint_limits["gripper"]
                 gripper_m = max(min_m, min(max_m, gripper_m))
             # Convert meters -> 0.001 mm
-            gripper_target = int(gripper_m * 1000 * 1000)
+            gripper_target = int(float(gripper_m) * 1000 * 1000)
 
         # 3. Set motion mode (MOVE J - joint space motion)
         self.piper.MotionCtrl_2(
