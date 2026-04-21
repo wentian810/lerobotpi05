@@ -85,6 +85,7 @@ class PI0Config(PreTrainedConfig):
     # Finetuning settings
     freeze_vision_encoder: bool = False  # Freeze only the vision encoder
     train_expert_only: bool = False  # Freeze entire VLM, train only action expert and projections
+    freeze_vlm_language_except_last_n: int = 0  # Freeze VLM language model except last N layers (0 = disabled)
 
     # Optimizer settings: see openpi `AdamW``
     optimizer_lr: float = 2.5e-5  # see openpi `CosineDecaySchedule: peak_lr`

@@ -77,7 +77,7 @@ lerobot-record \
     --teleop.can_port=can_leader \
     --dataset.repo_id=pi0/dataset \
     --dataset.single_task="Pick up the white box and place it in the cardboard box beside it." \
-    --dataset.root=/home/stouching/vla/repo/dataset/test1 \
+    --dataset.root=/home/stouching/vla/repo/dataset/test14 \
     --dataset.streaming_encoding=true \
     --dataset.encoder_threads=2 \
     --dataset.num_episodes=30 \
@@ -85,7 +85,7 @@ lerobot-record \
     --dataset.reset_time_s=15 \
     --dataset.push_to_hub=false \
     --play_sounds=false \
-    --display_data=false
+    --display_data=true
 """
 
 import logging

@@ -94,6 +94,15 @@ Merge multiple datasets from a list of local dataset paths:
         --operation.repo_ids "['pusht_train', 'pusht_val']" \
         --operation.roots "['/path/to/pusht_train', '/path/to/pusht_val']"
 
+# 合并本地数据集
+Merge multiple datasets from a list of local dataset paths:
+    lerobot-edit-dataset \
+        --new_repo_id pi0/dataset \
+        --operation.type merge \
+        --operation.repo_ids "['pi0/dataset', 'pi0/dataset']" \
+        --new_root /home/stouching/vla/repo/dataset/merged_test1_test2 \
+        --operation.roots "['/home/stouching/vla/repo/dataset/test1', '/home/stouching/vla/repo/dataset/test2']"
+
 Remove camera feature:
     lerobot-edit-dataset \
         --repo_id lerobot/pusht \

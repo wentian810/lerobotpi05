@@ -350,12 +350,14 @@ class PaliGemmaWithExpertModel(
         image_size: int = DEFAULT_IMAGE_SIZE,
         freeze_vision_encoder: bool = False,
         train_expert_only: bool = False,
+        freeze_vlm_language_except_last_n: int = 0,
     ):
         if use_adarms is None:
             use_adarms = [False, False]
         super().__init__()
         self.freeze_vision_encoder = freeze_vision_encoder
         self.train_expert_only = train_expert_only
+        self.freeze_vlm_language_except_last_n = freeze_vlm_language_except_last_n
 
         vlm_config_hf = CONFIG_MAPPING["paligemma"]()
         vlm_config_hf._vocab_size = 257152  # noqa: SLF001
@@ -430,6 +432,19 @@ class PaliGemmaWithExpertModel(
             self.paligemma.eval()
             for param in self.paligemma.parameters():
                 param.requires_grad = False
+        if self.freeze_vlm_language_except_last_n > 0:
+            lang_model = self.paligemma.model.language_model.model
+            total_layers = len(lang_model.layers)
+            n = self.freeze_vlm_language_except_last_n
+            # Freeze embedding layer
+            for param in lang_model.embed_tokens.parameters():
+                param.requires_grad = False
+            # Freeze all layers except the last N
+            for i, layer in enumerate(lang_model.layers):
+                if i < total_layers - n:
+                    layer.eval()
+                    for param in layer.parameters():
+                        param.requires_grad = False
 
     def train(self, mode: bool = True):
         super().train(mode)
@@ -437,6 +452,13 @@ class PaliGemmaWithExpertModel(
             self.paligemma.model.vision_tower.eval()
         if self.train_expert_only:
             self.paligemma.eval()
+        if self.freeze_vlm_language_except_last_n > 0:
+            lang_model = self.paligemma.model.language_model.model
+            total_layers = len(lang_model.layers)
+            n = self.freeze_vlm_language_except_last_n
+            for i, layer in enumerate(lang_model.layers):
+                if i < total_layers - n:
+                    layer.eval()
 
     def embed_image(self, image: torch.Tensor):
         # Vision tower and multi_modal_projector are kept in float32 (params_to_keep_float32). Align with PI05.
@@ -575,6 +597,7 @@ class PI0Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             image_size=config.image_resolution[0],
             freeze_vision_encoder=config.freeze_vision_encoder,
             train_expert_only=config.train_expert_only,
+            freeze_vlm_language_except_last_n=config.freeze_vlm_language_except_last_n,
         )
 
         self.action_in_proj = nn.Linear(config.max_action_dim, action_expert_config.width)

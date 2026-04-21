@@ -72,7 +72,7 @@ lerobot-teleoperate \
 
 
 ##### piper 
-python lerobot_teleoperate.py \
+uv run /home/stouching/vla/repo/lerobot052base/src/lerobot/scripts/lerobot_teleoperate.py \
   --robot.type=piper_follower \
   --robot.can_port=can_follower \
   --robot.id=piper_follower \

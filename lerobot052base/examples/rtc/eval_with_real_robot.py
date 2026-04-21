@@ -108,11 +108,11 @@ Usage:
 
     #微调测试
     uv run /home/stouching/vla/repo/lerobot052base/examples/rtc/eval_with_real_robot.py \
-    --policy.path=/home/stouching/Desktop/lerobot_v1/4_20_train_expert_only/checkpoints/005000/pretrained_model \
+    --policy.path=/home/stouching/Desktop/lerobot_v1/4_20_train_16k/checkpoints/016000/pretrained_model \
     --policy.device=cuda \
     --policy.dtype=bfloat16 \
     --rtc.enabled=true \
-    --rtc.execution_horizon=10 \
+    --rtc.execution_horizon=20 \
     --rtc.prefix_attention_schedule=EXP \
     --robot.type=piper_follower \
     --robot.can_port=can_follower \
@@ -121,7 +121,7 @@ Usage:
     --task="Pick up the white box and place it in the cardboard box beside it.\n" \
     --duration=300 \
     --action_queue_size_to_get_new_actions=40 \
-    --fps=10
+    --fps=20
 
     uv run /home/stouching/vla/repo/lerobot052base/examples/rtc/eval_with_real_robot.py \
     --policy.path=/home/stouching/Desktop/lerobot_v1/4_20_train_expert_only/checkpoints/005000/pretrained_model \
