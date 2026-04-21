@@ -77,6 +77,9 @@ class TrainPipelineConfig(HubMixin):
     rabc_epsilon: float = 1e-6  # Small constant for numerical stability
     rabc_head_mode: str | None = "sparse"  # For dual-head models: "sparse" or "dense"
 
+    # Gradient accumulation
+    gradient_accumulation_steps: int = 1  # Number of steps to accumulate gradients before updating weights
+
     # Rename map for the observation to override the image and state keys
     rename_map: dict[str, str] = field(default_factory=dict)
     checkpoint_path: Path | None = field(init=False, default=None)

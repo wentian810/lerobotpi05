@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 from lerobot.cameras import CameraConfig, Cv2Rotation
 from lerobot.cameras.opencv import OpenCVCameraConfig
+from lerobot.cameras.tactile import TactileCameraConfig
 
 from ..config import RobotConfig
 
@@ -74,8 +75,8 @@ class PiperFollowerConfigBase:
         "wrist": OpenCVCameraConfig(
             index_or_path="/dev/video2", fps=30, width=480, height=640, rotation=Cv2Rotation.ROTATE_90
         ),
-        "tactile": OpenCVCameraConfig(
-            index_or_path="/dev/video4", fps=30, width=640, height=480
+        "tactile": TactileCameraConfig(
+            usb_id="/dev/video4", finger_id="tactile", fps=30, width=640, height=480
         ),
     })
 

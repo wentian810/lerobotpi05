@@ -1,0 +1,10 @@
+opencv-python-headless>=4.9,<4.14
+numpy==2.2.6
+pyqtgraph==0.13.7
+PyQt5==5.15.11
+matplotlib==3.10.8
+numpy-stl==3.2.0
+PyOpenGL==3.1.10
+PyOpenGL-accelerate==3.1.10
+pillow==12.1.1
+pyyaml==6.0.3
