@@ -90,12 +90,12 @@ lerobot-record \
 lerobot-record \
   --robot.type=piper_follower \
   --robot.can_port=can_follower \
-  --robot.cameras='{base_0_rgb: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}, left_wrist_0_rgb: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, right_wrist_0_rgb: {type: tactile, usb_id: /dev/video4, finger_id: tactile, width: 640, height: 480, fps: 15}}' \
+  --robot.cameras='{base_0_rgb: {type: opencv, index_or_path: 2, width: 640, height: 480, fps: 30}, left_wrist_0_rgb: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}, right_wrist_0_rgb: {type: tactile, usb_id: /dev/video5, finger_id: tactile, width: 640, height: 480, fps: 15}}' \
   --teleop.type=piper_leader \
   --teleop.can_port=can_leader \
   --dataset.repo_id=pi0/dataset \
   --dataset.single_task="Pick up the white box and place it in the cardboard box beside it." \
-  --dataset.root=/home/stouching/vla/repo/dataset/test26\
+  --dataset.root=/home/stouching/vla/repo/dataset/test3\
   --dataset.streaming_encoding=true \
   --dataset.encoder_threads=2 \
   --dataset.num_episodes=30 \
