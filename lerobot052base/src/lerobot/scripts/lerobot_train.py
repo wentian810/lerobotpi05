@@ -28,28 +28,30 @@ lerobot-train \
     --policy.device=cuda \
     --policy.dtype=bfloat16 \
     --policy.train_expert_only=true \
+    --policy.chunk_size=100 \
+    --policy.n_action_steps=100 \
     --output_dir=/home/stouching/Desktop/lerobot_v1/4_21_train_16k \
     --job_name=pi0_piper_pick_box_16k \
     --wandb.enable=true \
     --wandb.project=vla \
     --wandb.entity=zhangchengang2001-southe \
-    --wandb.notes="Pi0 expert fine-tuning 16k steps bs4 lr1.25e-5" \
+    --wandb.notes="Pi0 expert fine-tuning bs16(4x4) lr1e-5 chunk100" \
     --steps=32000 \
     --batch_size=4 \
+    --gradient_accumulation_steps=4 \
     --save_freq=8000 \
     --log_freq=100 \
     --eval_freq=16000 \
     --optimizer.type=adamw \
-    --optimizer.lr=6.25e-6 \
+    --optimizer.lr=1e-5 \
     --optimizer.weight_decay=0.01 \
     --policy.scheduler_warmup_steps=3000 \
-    --policy.scheduler_decay_steps=30000 \
-    --policy.scheduler_decay_lr=2.5e-6 \
+    --policy.scheduler_decay_steps=32000 \
+    --policy.scheduler_decay_lr=1e-6 \
     --seed=42 \
     --num_workers=8
 
-    lerobot-train --policy.pretrained_path=/home/stouching/Desktop/lerobot_v1/pi0_base/pi0_base_weight --dataset.repo_id=pi0/dataset --dataset.root=/home/stouching/vla/repo/dataset/test1 --policy.push_to_hub=false --policy.type=pi0 --policy.empty_cameras=1 --policy.device=cuda --policy.dtype=bfloat16 --policy.train_expert_only=true --output_dir=/home/stouching/Desktop/lerobot_v1/4_20_train_16k --job_name=pi0_piper_pick_box_16k --wandb.enable=true --wandb.project=vla --wandb.entity=zhangchengang2001-southe --wandb.notes="Pi0 expert fine-tuning 16k steps bs4 lr1.25e-5" --steps=16000 --batch_size=4 --save_freq=4000 --log_freq=100 --eval_freq=16000 --optimizer.type=adamw --optimizer.lr=1.25e-5 --optimizer.weight_decay=0.01 --policy.scheduler_warmup_steps=1000 --policy.scheduler_decay_steps=30000 --policy.scheduler_decay_lr=2.5e-6 --seed=42 --num_workers=8
-
+lerobot-train --policy.pretrained_path=/home/stouching/Desktop/lerobot_v1/pi0_base/pi0_base_weight --dataset.repo_id=pi0/dataset --dataset.root=/home/stouching/vla/repo/dataset/merged_test1_test2 --policy.push_to_hub=false --policy.type=pi0 --policy.empty_cameras=1 --policy.device=cuda --policy.dtype=bfloat16 --policy.train_expert_only=true --policy.chunk_size=100 --policy.n_action_steps=100 --output_dir=/home/stouching/Desktop/lerobot_v1/4_21_train_16k --job_name=pi0_piper_pick_box_16k --wandb.enable=true --wandb.project=vla --wandb.entity=zhangchengang2001-southe --wandb.notes="Pi0 expert fine-tuning bs16(4x4) lr1e-5 chunk100" --steps=32000 --batch_size=4 --gradient_accumulation_steps=4 --save_freq=8000 --log_freq=100 --eval_freq=16000 --optimizer.type=adamw --optimizer.lr=1e-5 --optimizer.weight_decay=0.01 --policy.scheduler_warmup_steps=3000 --policy.scheduler_decay_steps=32000 --policy.scheduler_decay_lr=1e-6 --seed=42 --num_workers=8
 
 
 lerobot-train \
@@ -175,6 +177,8 @@ def update_policy(
     lr_scheduler=None,
     lock=None,
     rabc_weights_provider=None,
+    accumulation_step: int = 0,
+    gradient_accumulation_steps: int = 1,
 ) -> tuple[MetricsTracker, dict]:
     """
     Performs a single training step to update the policy's weights.
@@ -192,6 +196,8 @@ def update_policy(
         lr_scheduler: An optional learning rate scheduler.
         lock: An optional lock for thread-safe optimizer updates.
         rabc_weights_provider: Optional RABCWeights instance for sample weighting.
+        accumulation_step: Current gradient accumulation step (0-indexed).
+        gradient_accumulation_steps: Total number of gradient accumulation steps.
 
     Returns:
         A tuple containing:
@@ -200,6 +206,9 @@ def update_policy(
     """
     start_time = time.perf_counter()
     policy.train()
+
+    # Determine if this is the last accumulation step
+    is_accumulation_last_step = (accumulation_step + 1) % gradient_accumulation_steps == 0
 
     # Get RA-BC weights if enabled
     rabc_batch_weights = None
@@ -225,35 +234,44 @@ def update_policy(
         else:
             loss, output_dict = policy.forward(batch)
 
+        # Scale loss by gradient accumulation steps to get correct average gradient
+        loss = loss / gradient_accumulation_steps
+
         # TODO(rcadene): policy.unnormalize_outputs(out_dict)
 
     # Use accelerator's backward method
     accelerator.backward(loss)
 
-    # Clip gradients if specified
-    if grad_clip_norm > 0:
-        grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+    # Only update weights on the last accumulation step
+    if is_accumulation_last_step:
+        # Clip gradients if specified
+        if grad_clip_norm > 0:
+            grad_norm = accelerator.clip_grad_norm_(policy.parameters(), grad_clip_norm)
+        else:
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                policy.parameters(), float("inf"), error_if_nonfinite=False
+            )
+
+        # Optimizer step
+        with lock if lock is not None else nullcontext():
+            optimizer.step()
+
+        optimizer.zero_grad()
+
+        # Step through pytorch scheduler at every batch instead of epoch
+        if lr_scheduler is not None:
+            lr_scheduler.step()
+
+        # Update internal buffers if policy has update method
+        if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
+            accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
+
+        train_metrics.grad_norm = grad_norm.item()
     else:
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            policy.parameters(), float("inf"), error_if_nonfinite=False
-        )
+        # Return None for grad_norm during accumulation steps
+        train_metrics.grad_norm = 0.0
 
-    # Optimizer step
-    with lock if lock is not None else nullcontext():
-        optimizer.step()
-
-    optimizer.zero_grad()
-
-    # Step through pytorch scheduler at every batch instead of epoch
-    if lr_scheduler is not None:
-        lr_scheduler.step()
-
-    # Update internal buffers if policy has update method
-    if has_method(accelerator.unwrap_model(policy, keep_fp32_wrapper=True), "update"):
-        accelerator.unwrap_model(policy, keep_fp32_wrapper=True).update()
-
-    train_metrics.loss = loss.item()
-    train_metrics.grad_norm = grad_norm.item()
+    train_metrics.loss = loss.item() * gradient_accumulation_steps  # Report unscaled loss
     train_metrics.lr = optimizer.param_groups[0]["lr"]
     train_metrics.update_s = time.perf_counter() - start_time
     return train_metrics, output_dict
@@ -463,8 +481,11 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
         logging.info(f"{dataset.num_frames=} ({format_big_number(dataset.num_frames)})")
         logging.info(f"{dataset.num_episodes=}")
         num_processes = accelerator.num_processes
-        effective_bs = cfg.batch_size * num_processes
-        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} = {effective_bs}")
+        effective_bs = cfg.batch_size * num_processes * cfg.gradient_accumulation_steps
+        logging.info(f"Per-device batch size: {cfg.batch_size}")
+        logging.info(f"Number of processes: {num_processes}")
+        logging.info(f"Gradient accumulation steps: {cfg.gradient_accumulation_steps}")
+        logging.info(f"Effective batch size: {cfg.batch_size} x {num_processes} x {cfg.gradient_accumulation_steps} = {effective_bs}")
         logging.info(f"{num_learnable_params=} ({format_big_number(num_learnable_params)})")
         logging.info(f"{num_total_params=} ({format_big_number(num_total_params)})")
 
@@ -511,9 +532,9 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
     }
 
     # Keep global batch size for logging; MetricsTracker handles world size internally.
-    effective_batch_size = cfg.batch_size * accelerator.num_processes
+    effective_batch_size = cfg.batch_size * accelerator.num_processes * cfg.gradient_accumulation_steps
     train_tracker = MetricsTracker(
-        cfg.batch_size,
+        cfg.batch_size * cfg.gradient_accumulation_steps,  # Report the effective batch size
         dataset.num_frames,
         dataset.num_episodes,
         train_metrics,
@@ -534,6 +555,10 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             f"Start offline training on a fixed dataset, with effective batch size: {effective_batch_size}"
         )
 
+    # Gradient accumulation setup
+    gradient_accumulation_steps = cfg.gradient_accumulation_steps
+    accumulation_step = 0
+
     for _ in range(step, cfg.steps):
         start_time = time.perf_counter()
         batch = next(dl_iter)
@@ -549,7 +574,19 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
             accelerator=accelerator,
             lr_scheduler=lr_scheduler,
             rabc_weights_provider=rabc_weights,
+            accumulation_step=accumulation_step,
+            gradient_accumulation_steps=gradient_accumulation_steps,
         )
+
+        accumulation_step += 1
+
+        # Only update step counter and perform logging/checkpointing after accumulation is complete
+        is_accumulation_last_step = accumulation_step % gradient_accumulation_steps == 0
+        if not is_accumulation_last_step:
+            continue
+
+        # Reset accumulation counter
+        accumulation_step = 0
 
         # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
         # increment `step` here.
