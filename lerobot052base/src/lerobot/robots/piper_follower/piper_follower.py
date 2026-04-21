@@ -93,6 +93,11 @@ class PiperFollower(Robot):
         self._last_gripper_position = 0.0
         self._connected = False
 
+        # Low-pass filter cache for joint targets (SDK units)
+        self._last_joint_targets_sdk = [0] * 6
+        # Smoothing weight: 0.5 = equal weight for current and previous action
+        self._action_smoothing_weight = 0.1
+
     # ========== Feature Definitions ==========
 
     @property
@@ -255,6 +260,7 @@ class PiperFollower(Robot):
         """
         # 1. Extract and convert joint targets (radians -> SDK units: 0.001 degrees)
         joint_targets = []
+        
         for idx, joint_name in enumerate(self.JOINT_NAMES):
             key = f"{joint_name}.pos"
             if key in action:
@@ -277,9 +283,21 @@ class PiperFollower(Robot):
                 # Use cached last position
                 target_sdk = int(round(float(self._last_joint_positions[idx]) * RAD_TO_DEG * 1000))
                 joint_targets.append(target_sdk)
-
+        
+        # 1.5 Apply low-pass filter for action smoothing
+        # Formula: filtered = weight * current + (1 - weight) * previous
+        w = self._action_smoothing_weight
+        for i in range(len(joint_targets)):
+            current = joint_targets[i]
+            previous = self._last_joint_targets_sdk[i] if self._last_joint_targets_sdk[i] != 0 else current
+            filtered = int(w * current + (1 - w) * previous)
+            joint_targets[i] = filtered
+            # Update cache for next iteration
+            self._last_joint_targets_sdk[i] = filtered
+        
         # 2. Extract and convert gripper target (meters -> SDK units: 0.001 mm)
         gripper_target = 500000  # Default: half open
+
         if "gripper.pos" in action:
             gripper_m = action["gripper.pos"]
             # Apply gripper limits

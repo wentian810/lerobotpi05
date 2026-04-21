@@ -181,6 +181,8 @@ class PiperLeader(Teleoperator):
         dt_ms = (time.perf_counter() - start) * 1e3
         logger.debug(f"{self} get_action took: {dt_ms:.1f}ms")
 
+
+
         return action
 
     def send_feedback(self, feedback: dict[str, float]) -> None:
