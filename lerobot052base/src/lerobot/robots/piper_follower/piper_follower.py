@@ -300,12 +300,40 @@ class PiperFollower(Robot):
 
         if "gripper.pos" in action:
             gripper_m = action["gripper.pos"]
+
+
             # Apply gripper limits
             if "gripper" in self.config.joint_limits:
                 min_m, max_m = self.config.joint_limits["gripper"]
                 gripper_m = max(min_m, min(max_m, gripper_m))
             # Convert meters -> 0.001 mm
+
+
+
             gripper_target = int(float(gripper_m) * 1000 * 1000)
+
+
+
+
+
+
+        #print(f"gripper_target: {gripper_target}")
+        gripper_msgs = self.piper.GetArmGripperMsgs()
+        if gripper_target >50000:
+            gripper_target_t = gripper_msgs.gripper_state.grippers_angle +3000
+        if gripper_target<=50000 and gripper_target> 10000:
+            gripper_target_t = gripper_msgs.gripper_state.grippers_angle 
+        if gripper_target <= 10000:
+            gripper_target_t = gripper_msgs.gripper_state.grippers_angle -3000
+        #print(gripper_msgs.gripper_state.grippers_angle / 1000.0)
+        gripper_target = gripper_target_t
+
+
+
+
+
+
+
 
         # 3. Set motion mode (MOVE J - joint space motion)
         self.piper.MotionCtrl_2(
