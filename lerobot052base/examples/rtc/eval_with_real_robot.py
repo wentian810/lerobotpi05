@@ -138,6 +138,37 @@ Usage:
     --duration=300 \
     --action_queue_size_to_get_new_actions=40 \
     --fps=10
+
+    ACT+无单独cnn测试
+    uv run /home/stouching/vla/repo/lerobot052base/examples/rtc/eval_with_real_robot.py \
+    --policy.path=/home/stouching/vla/repo/lerobot052base/outputs/train/act_piper_cup_grasp_v2/checkpoints/last/pretrained_model \
+    --policy.device=cuda \
+    --rtc.enabled=true \
+    --rtc.execution_horizon=20 \
+    --rtc.prefix_attention_schedule=EXP \
+    --robot.type=piper_follower \
+    --robot.can_port=can_follower \
+    --robot.cameras='{base_0_rgb: {type: opencv, index_or_path: /dev/video17, width: 640, height: 480, fps: 30, warmup_s: 60}, left_wrist_0_rgb: {type: opencv, index_or_path: /dev/video7, width: 640, height: 480, fps: 30, warmup_s: 60}, right_wrist_0_rgb: {type: tactile, usb_id: /dev/video9, finger_id: tactile, width: 640, height: 480, fps: 15}}' \
+    --task="Grasp the white paper cup and lift it and place it in the cardboard box beside it." \
+    --duration=300 \
+    --action_queue_size_to_get_new_actions=50 \
+    --fps=30
+
+
+    uv run /home/stouching/vla/repo/lerobot052base/examples/rtc/eval_with_real_robot.py \
+    --policy.path=/home/stouching/vla/repo/lerobot052base/outputs/train/act_piper_cup_grasp_tactile_cnn/checkpoints/last/pretrained_model \
+    --policy.device=cuda \
+    --rtc.enabled=true \
+    --rtc.execution_horizon=20 \
+    --rtc.prefix_attention_schedule=EXP \
+    --robot.type=piper_follower \
+    --robot.can_port=can_follower \
+    --robot.cameras='{base_0_rgb: {type: opencv, index_or_path: /dev/video7, width: 640, height: 480, fps: 30, warmup_s: 60}, left_wrist_0_rgb: {type: opencv, index_or_path: /dev/video15, width: 640, height: 480, fps: 30, warmup_s: 60}, right_wrist_0_rgb: {type: tactile, usb_id: /dev/video17, finger_id: tactile, width: 640, height: 480, fps: 15}}' \
+    --task="Grasp the white paper cup and lift it and place it in the cardboard box beside it." \
+    --duration=300 \
+    --action_queue_size_to_get_new_actions=50 \
+    --fps=30
+
 """
 
 import logging
@@ -393,7 +424,9 @@ def get_actions(
         get_actions_threshold = cfg.action_queue_size_to_get_new_actions
 
         if not cfg.rtc.enabled:
-            get_actions_threshold = 0
+            # For non-RTC policies (e.g. ACT), still request new chunks before the
+            # queue runs empty so inference delay doesn't cause action gaps.
+            get_actions_threshold = cfg.action_queue_size_to_get_new_actions
 
         while not shutdown_event.is_set():
             if action_queue.qsize() <= get_actions_threshold:
@@ -455,11 +488,15 @@ def get_actions(
                         )
 
                 # Generate actions WITH RTC
-                actions = policy.predict_action_chunk(
-                    preproceseded_obs,
-                    inference_delay=inference_delay,
-                    prev_chunk_left_over=prev_actions,
-                )
+                if policy.name == "act":
+                    # ACT's predict_action_chunk does not support RTC-specific arguments
+                    actions = policy.predict_action_chunk(preproceseded_obs)
+                else:
+                    actions = policy.predict_action_chunk(
+                        preproceseded_obs,
+                        inference_delay=inference_delay,
+                        prev_chunk_left_over=prev_actions,
+                    )
 
                 # Store original actions (before postprocessing) for RTC
                 original_actions = actions.squeeze(0).clone()
@@ -639,7 +676,7 @@ def demo_cli(cfg: RTCDemoConfig):
     # The processor won't be created
     policy.init_rtc_processor()
 
-    assert policy.name in ["smolvla", "pi05", "pi0"], "Only smolvla, pi05, and pi0 are supported for RTC"
+    assert policy.name in ["smolvla", "pi05", "pi0", "act"], "Only smolvla, pi05, pi0, and act are supported for RTC"
 
     policy = policy.to(cfg.device)
     policy.eval()

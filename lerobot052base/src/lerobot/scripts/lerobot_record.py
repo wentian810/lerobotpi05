@@ -104,6 +104,29 @@ lerobot-record \
   --dataset.push_to_hub=false \
   --play_sounds=false \
   --display_data=false
+
+# ==== 4.28pi0.5 tactile recording example ====
+# Record a dataset containing a tactile camera stream for pi0.5 training.
+# Use --policy.path to optionally record with an existing pi0.5 policy.
+# Replace the camera indexes and USB device path with the real hardware mapping.
+# The tactile image key should match the camera name in the dataset.
+lerobot-record \
+  --robot.type=piper_follower \
+  --robot.can_port=can_follower \
+  --robot.cameras='{base_0_rgb: {type: opencv, index_or_path: /dev/video17, width: 640, height: 480, fps: 30, warmup_s: 60}, left_wrist_0_rgb: {type: opencv, index_or_path: /dev/video12, width: 640, height: 480, fps: 30, warmup_s: 60}, right_wrist_0_rgb: {type: tactile, usb_id: /dev/video5, finger_id: tactile, width: 640, height: 480, fps: 15}}' \
+  --teleop.type=piper_leader \
+  --teleop.can_port=can_leader \
+  --dataset.repo_id=pi05/dataset \
+  --dataset.single_task="Pick up the white box and place it in the cardboard box beside it." \
+  --dataset.root=/home/stouching/vla/repo/dataset/pi05_tactile \
+  --dataset.streaming_encoding=true \
+  --dataset.encoder_threads=2 \
+  --dataset.num_episodes=30 \
+  --dataset.episode_time_s=500 \
+  --dataset.reset_time_s=15 \
+  --dataset.push_to_hub=false \
+  --play_sounds=false \
+  --display_data=false
 """
 
 import logging

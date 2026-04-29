@@ -64,6 +64,12 @@ class PI05Config(PreTrainedConfig):
         DEFAULT_IMAGE_SIZE,
     )  # see openpi `preprocessing_pytorch.py`
 
+    # Image keys that should be encoded by a lightweight tactile encoder
+    # instead of the full SigLIP vision tower. This is useful for tactile
+    # RGB inputs such as `observation.images.tactile`.
+    tactile_image_keys: list[str] = field(default_factory=list)
+    tactile_encoder_num_tokens: int = 4
+
     # Add empty images. Used to add empty cameras when no image features are present.
     empty_cameras: int = 0
 
@@ -120,6 +126,9 @@ class PI05Config(PreTrainedConfig):
 
         if self.dtype not in ["bfloat16", "float32"]:
             raise ValueError(f"Invalid dtype: {self.dtype}")
+
+        if self.tactile_encoder_num_tokens < 1:
+            raise ValueError("tactile_encoder_num_tokens must be >= 1")
 
     def validate_features(self) -> None:
         """Validate and set up input/output features."""

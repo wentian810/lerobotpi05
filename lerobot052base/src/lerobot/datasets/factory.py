@@ -121,6 +121,10 @@ def make_dataset(cfg: TrainPipelineConfig) -> LeRobotDataset | MultiLeRobotDatas
 
     if cfg.dataset.use_imagenet_stats:
         for key in dataset.meta.camera_keys:
+            # Skip tactile sensors: their channels encode pressure/flow, not natural RGB.
+            # ImageNet mean/std is meaningless for tactile data and would distort the signal.
+            if "tactile" in key:
+                continue
             for stats_type, stats in IMAGENET_STATS.items():
                 dataset.meta.stats[key][stats_type] = torch.tensor(stats, dtype=torch.float32)
 

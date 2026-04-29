@@ -33,7 +33,7 @@ lerobot-train \
     --output_dir=/home/stouching/Desktop/lerobot_v1/4_21_train_16k \
     --job_name=pi0_piper_pick_box_16k \
     --wandb.enable=true \
-    --wandb.project=vla \
+    --wandb.project=vla-pi0.5 \
     --wandb.entity=zhangchengang2001-southe \
     --wandb.notes="Pi0 expert fine-tuning bs16(4x4) lr1e-5 chunk100" \
     --steps=32000 \
@@ -50,6 +50,44 @@ lerobot-train \
     --policy.scheduler_decay_lr=1e-6 \
     --seed=42 \
     --num_workers=8
+
+# ====4.28 pi0.5 tactile training example ====
+# Use the tactile image key from the dataset as a dedicated tactile encoder input.
+lerobot-train \
+    --policy.pretrained_path=/lerobot/pi05_base \
+    --dataset.repo_id=pi05/dataset \
+    --dataset.root=/home/stouching/vla/repo/dataset/test01 \
+    --policy.push_to_hub=false \
+    --policy.type=pi05 \
+    --policy.device=cuda \
+    --policy.dtype=bfloat16 \
+    --policy.train_expert_only=true \
+    --policy.chunk_size=100 \
+    --policy.n_action_steps=100 \
+    --policy.tactile_image_keys='["observation.images.right_wrist_0_rgb"]' \
+    --output_dir=/home/stouching/Desktop/lerobot_v1/pi05_tactile_train \
+    --job_name=pi05_piper_tactile_train \
+    --wandb.enable=true \
+    --wandb.project=vtlapi0.5 \
+    --wandb.entity=models-harbin-institute-of-technology5422 \
+    --wandb.notes="Pi0.5 tactile fine-tuning bs4 lr1e-5 chunk100" \
+    --steps=32000 \
+    --batch_size=4 \
+    --gradient_accumulation_steps=4 \
+    --save_freq=8000 \
+    --log_freq=100 \
+    --eval_freq=16000 \
+    --optimizer.type=adamw \
+    --optimizer.lr=1e-5 \
+    --optimizer.weight_decay=0.01 \
+    --policy.scheduler_warmup_steps=3000 \
+    --policy.scheduler_decay_steps=32000 \
+    --policy.scheduler_decay_lr=1e-6 \
+    --seed=42 \
+    --num_workers=8
+lerobot-train --policy.pretrained_path=/media/stouching/软件/hf_cache/pi05_base --dataset.repo_id=pi05/dataset --dataset.root=/home/stouching/vla/repo/dataset/test01 --policy.push_to_hub=false --policy.type=pi05 --policy.device=cuda --policy.dtype=bfloat16 --policy.train_expert_only=true --policy.chunk_size=100 --policy.n_action_steps=100 --policy.tactile_image_keys='["observation.images.right_wrist_0_rgb"]' --output_dir=/home/stouching/Desktop/lerobot_v1/pi05_tactile_train --job_name=pi05_piper_tactile_train --wandb.enable=true --wandb.project=vtlapi0.5 --wandb.entity=models-harbin-institute-of-technology5422 --wandb.notes="Pi0.5 tactile fine-tuning bs4 lr1e-5 chunk100" --steps=16000 --batch_size=4 --gradient_accumulation_steps=4 --save_freq=8000 --log_freq=100 --eval_freq=16000 --optimizer.type=adamw --optimizer.lr=1e-5 --optimizer.weight_decay=0.01 --policy.scheduler_warmup_steps=2000 --policy.scheduler_decay_steps=16000 --policy.scheduler_decay_lr=1e-6 --seed=42 --num_workers=8
+
+
 
 lerobot-train --policy.pretrained_path=/home/stouching/Desktop/lerobot_v1/pi0_base/pi0_base_weight --dataset.repo_id=pi0/dataset --dataset.root=/home/stouching/vla/repo/dataset/merged_test1_test2 --policy.push_to_hub=false --policy.type=pi0 --policy.empty_cameras=1 --policy.device=cuda --policy.dtype=bfloat16 --policy.train_expert_only=true --policy.chunk_size=100 --policy.n_action_steps=100 --output_dir=/home/stouching/Desktop/lerobot_v1/4_21_train_16k --job_name=pi0_piper_pick_box_16k --wandb.enable=true --wandb.project=vla --wandb.entity=zhangchengang2001-southe --wandb.notes="Pi0 expert fine-tuning bs16(4x4) lr1e-5 chunk100" --steps=32000 --batch_size=4 --gradient_accumulation_steps=4 --save_freq=8000 --log_freq=100 --eval_freq=16000 --optimizer.type=adamw --optimizer.lr=1e-5 --optimizer.weight_decay=0.01 --policy.scheduler_warmup_steps=3000 --policy.scheduler_decay_steps=32000 --policy.scheduler_decay_lr=1e-6 --seed=42 --num_workers=8
 
@@ -208,7 +246,7 @@ def update_policy(
     policy.train()
 
     # Determine if this is the last accumulation step
-    is_accumulation_last_step = (accumulation_step + 1) % gradient_accumulation_steps == 0
+    is_accumulation_last_step = (accumulation_step + 1) == gradient_accumulation_steps
 
     # Get RA-BC weights if enabled
     rabc_batch_weights = None
@@ -557,40 +595,30 @@ def train(cfg: TrainPipelineConfig, accelerator: "Accelerator | None" = None):
 
     # Gradient accumulation setup
     gradient_accumulation_steps = cfg.gradient_accumulation_steps
-    accumulation_step = 0
 
-    for _ in range(step, cfg.steps):
-        start_time = time.perf_counter()
-        batch = next(dl_iter)
-        batch = preprocessor(batch)
-        train_tracker.dataloading_s = time.perf_counter() - start_time
+    num_updates = cfg.steps
+    for update_idx in range(step, num_updates):
+        for accum_idx in range(gradient_accumulation_steps):
+            start_time = time.perf_counter()
+            batch = next(dl_iter)
+            batch = preprocessor(batch)
+            train_tracker.dataloading_s = time.perf_counter() - start_time
 
-        train_tracker, output_dict = update_policy(
-            train_tracker,
-            policy,
-            batch,
-            optimizer,
-            cfg.optimizer.grad_clip_norm,
-            accelerator=accelerator,
-            lr_scheduler=lr_scheduler,
-            rabc_weights_provider=rabc_weights,
-            accumulation_step=accumulation_step,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-        )
-
-        accumulation_step += 1
+            train_tracker, output_dict = update_policy(
+                train_tracker,
+                policy,
+                batch,
+                optimizer,
+                cfg.optimizer.grad_clip_norm,
+                accelerator=accelerator,
+                lr_scheduler=lr_scheduler,
+                rabc_weights_provider=rabc_weights,
+                accumulation_step=accum_idx,
+                gradient_accumulation_steps=gradient_accumulation_steps,
+            )
 
         # Only update step counter and perform logging/checkpointing after accumulation is complete
-        is_accumulation_last_step = accumulation_step % gradient_accumulation_steps == 0
-        if not is_accumulation_last_step:
-            continue
-
-        # Reset accumulation counter
-        accumulation_step = 0
-
-        # Note: eval and checkpoint happens *after* the `step`th training update has completed, so we
-        # increment `step` here.
-        step += 1
+        step = update_idx + 1
         if is_main_process:
             progbar.update(1)
         train_tracker.step()

@@ -446,6 +446,21 @@ class PaliGemmaWithExpertModel(
             features = features.to(out_dtype)
         return features
 
+    def embed_tactile_image(self, image: torch.Tensor):
+        """Encode tactile RGB images using a lightweight CNN encoder."""
+        out_dtype = image.dtype
+        if image.dtype != torch.float32:
+            image = image.to(torch.float32)
+
+        x = self.tactile_encoder(image)
+        x = x.permute(0, 2, 3, 1).reshape(image.shape[0], -1, self.tactile_encoder_hidden_dim)
+        x = self.tactile_projection(x)
+        x = x * math.sqrt(self.tactile_encoder_hidden_dim)
+
+        if x.dtype != out_dtype:
+            x = x.to(out_dtype)
+        return x
+
     def embed_language_tokens(self, tokens: torch.Tensor):
         return self.paligemma.model.language_model.embed_tokens(tokens)
 
@@ -580,6 +595,23 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         self.time_mlp_in = nn.Linear(action_expert_config.width, action_expert_config.width)
         self.time_mlp_out = nn.Linear(action_expert_config.width, action_expert_config.width)
 
+        self.tactile_image_keys = config.tactile_image_keys
+        self.tactile_encoder_num_tokens = config.tactile_encoder_num_tokens
+        self.tactile_encoder_hidden_dim = self.paligemma_with_expert.paligemma.config.text_config.hidden_size
+        self.tactile_encoder_proj_dim = min(self.tactile_encoder_hidden_dim, 256)
+        self.tactile_encoder = nn.Sequential(
+            nn.Conv2d(3, 32, kernel_size=7, stride=2, padding=3),
+            nn.GELU(),
+            nn.BatchNorm2d(32),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.GELU(),
+            nn.BatchNorm2d(64),
+            nn.Conv2d(64, self.tactile_encoder_proj_dim, kernel_size=3, stride=2, padding=1),
+            nn.GELU(),
+            nn.AdaptiveAvgPool2d((1, self.tactile_encoder_num_tokens)),
+        )
+        self.tactile_projection = nn.Linear(self.tactile_encoder_proj_dim, self.tactile_encoder_hidden_dim)
+
         # Initialize gradient checkpointing flag
         self.gradient_checkpointing_enabled = False
 
@@ -638,15 +670,30 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         time = time_beta * self.config.time_sampling_scale + self.config.time_sampling_offset
         return time.to(dtype=torch.float32, device=device)
 
+    def embed_tactile_image(self, image: torch.Tensor) -> torch.Tensor:
+        """Encode tactile RGB images into token embeddings for the language backbone."""
+        out_dtype = image.dtype
+        if image.dtype != torch.float32:
+            image = image.to(torch.float32)
+
+        x = self.tactile_encoder(image)
+        x = x.permute(0, 2, 3, 1).reshape(image.shape[0], -1, self.tactile_encoder_proj_dim)
+        x = self.tactile_projection(x)
+        x = x * math.sqrt(self.tactile_encoder_hidden_dim)
+
+        if x.dtype != out_dtype:
+            x = x.to(out_dtype)
+        return x
+
     def embed_prefix(
-        self, images, img_masks, tokens, masks
+        self, images, img_masks, tactile_images, tactile_masks, tokens, masks
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Embed images with SigLIP and language tokens with embedding layer."""
+        """Embed images with SigLIP, tactile images with a lightweight encoder, and language tokens with embedding layer."""
         embs = []
         pad_masks = []
         att_masks = []
 
-        # Process images
+        # Process vision images
         for img, img_mask in zip(images, img_masks, strict=True):
 
             def image_embed_func(img):
@@ -658,6 +705,15 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             embs.append(img_emb)
             pad_masks.append(img_mask[:, None].expand(bsize, num_img_embs))
             att_masks += [0] * num_img_embs
+
+        # Process tactile images through lightweight tactile encoder
+        for tac_img, tac_mask in zip(tactile_images, tactile_masks, strict=True):
+            tac_emb = self._apply_checkpoint(self.embed_tactile_image, tac_img)
+            bsize, num_tactile_embs = tac_emb.shape[:2]
+
+            embs.append(tac_emb)
+            pad_masks.append(tac_mask[:, None].expand(bsize, num_tactile_embs))
+            att_masks += [0] * num_tactile_embs
 
         # Process language tokens
         def lang_embed_func(tokens):
@@ -728,7 +784,18 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
 
         return embs, pad_masks, att_masks, adarms_cond
 
-    def forward(self, images, img_masks, tokens, masks, actions, noise=None, time=None) -> Tensor:
+    def forward(
+        self,
+        images,
+        img_masks,
+        tactile_images,
+        tactile_masks,
+        tokens,
+        masks,
+        actions,
+        noise=None,
+        time=None,
+    ) -> Tensor:
         """Do a full training forward pass and compute the loss."""
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
@@ -740,7 +807,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, tactile_images, tactile_masks, tokens, masks
+        )
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(x_t, time)
 
         if (
@@ -788,6 +857,8 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
         self,
         images,
         img_masks,
+        tactile_images,
+        tactile_masks,
         tokens,
         masks,
         noise=None,
@@ -810,7 +881,9 @@ class PI05Pytorch(nn.Module):  # see openpi `PI0Pytorch`
             )  # Use config max_action_dim for internal processing
             noise = self.sample_noise(actions_shape, device)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, tokens, masks)
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, tactile_images, tactile_masks, tokens, masks
+        )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
@@ -1141,71 +1214,88 @@ class PI05Policy(PreTrainedPolicy):
     def _rtc_enabled(self) -> bool:
         return self.config.rtc_config is not None and self.config.rtc_config.enabled
 
-    def _preprocess_images(self, batch: dict[str, Tensor]) -> tuple[list[Tensor], list[Tensor]]:
+    def _preprocess_images(
+        self, batch: dict[str, Tensor]
+    ) -> tuple[list[Tensor], list[Tensor], list[Tensor], list[Tensor]]:
         """Preprocess images for the model.
 
         Images from LeRobot are typically in [B, C, H, W] format and normalized to [0, 1].
         PaliGemma expects images in [B, C, H, W] format and normalized to [-1, 1].
+        Tactile image keys can be encoded separately using a lightweight tactile encoder.
         """
-        images = []
-        img_masks = []
+        visual_images = []
+        visual_masks = []
+        tactile_images = []
+        tactile_masks = []
 
         # Get device from model parameters
         device = next(self.parameters()).device
 
-        present_img_keys = [key for key in self.config.image_features if key in batch]
-        missing_img_keys = [key for key in self.config.image_features if key not in batch]
+        tactile_image_keys = getattr(self.config, "tactile_image_keys", [])
+        visual_keys = [
+            key for key in self.config.image_features if key not in tactile_image_keys
+        ]
+        tactile_keys = [key for key in tactile_image_keys if key in self.config.image_features]
 
-        if len(present_img_keys) == 0:
+        if len(visual_keys) + len(tactile_keys) == 0:
             raise ValueError(
-                f"All image features are missing from the batch. At least one expected. "
+                f"No valid image features were found in the batch. "
                 f"(batch: {batch.keys()}) (image_features: {self.config.image_features})"
             )
 
-        # Preprocess image features present in the batch
-        for key in present_img_keys:
-            img = batch[key]
+        def preprocess_group(keys: list[str]):
+            group_images: list[Tensor] = []
+            group_masks: list[Tensor] = []
+            present_keys = [key for key in keys if key in batch]
+            missing_count = len(keys) - len(present_keys)
 
-            # Ensure tensor is on the same device as the model
-            if img.device != device:
-                img = img.to(device)
+            for key in present_keys:
+                img = batch[key]
 
-            # Ensure float32 dtype for consistency
-            if img.dtype != torch.float32:
-                img = img.to(torch.float32)
+                if img.device != device:
+                    img = img.to(device)
+                if img.dtype != torch.float32:
+                    img = img.to(torch.float32)
 
-            # from openpi preprocess_observation_pytorch: Handle both [B, C, H, W] and [B, H, W, C] formats
-            is_channels_first = img.shape[1] == 3  # Check if channels are in dimension 1
+                is_channels_first = img.shape[1] == 3
+                if is_channels_first:
+                    img = img.permute(0, 2, 3, 1)
 
-            if is_channels_first:
-                # Convert [B, C, H, W] to [B, H, W, C] for processing
-                img = img.permute(0, 2, 3, 1)
+                if img.shape[1:3] != self.config.image_resolution:
+                    img = resize_with_pad_torch(img, *self.config.image_resolution)
 
-            # from openpi preprocess_observation_pytorch: Resize with padding if needed
-            if img.shape[1:3] != self.config.image_resolution:
-                img = resize_with_pad_torch(img, *self.config.image_resolution)
+                img = img * 2.0 - 1.0
 
-            # Normalize from [0,1] to [-1,1] as expected by siglip
-            img = img * 2.0 - 1.0
+                if is_channels_first:
+                    img = img.permute(0, 3, 1, 2)
 
-            # from openpi preprocess_observation_pytorch: Convert back to [B, C, H, W] format if it was originally channels-first
-            if is_channels_first:
-                img = img.permute(0, 3, 1, 2)  # [B, H, W, C] -> [B, C, H, W]
+                group_images.append(img)
+                group_masks.append(torch.ones(img.shape[0], dtype=torch.bool, device=device))
 
-            images.append(img)
-            # Create mask (all ones for real images)
-            bsize = img.shape[0]
-            mask = torch.ones(bsize, dtype=torch.bool, device=device)
-            img_masks.append(mask)
+            if missing_count > 0:
+                batch_size = next(iter(batch.values())).shape[0]
+                dummy_img = torch.full(
+                    (batch_size, 3, *self.config.image_resolution),
+                    -1.0,
+                    dtype=torch.float32,
+                    device=device,
+                )
+                dummy_mask = torch.zeros(batch_size, dtype=torch.bool, device=device)
+                for _ in range(missing_count):
+                    group_images.append(dummy_img)
+                    group_masks.append(dummy_mask)
 
-        # Create image features not present in the batch as fully 0 padded images
-        for _num_empty_cameras in range(len(missing_img_keys)):
-            img = torch.ones_like(img) * -1  # Padded with -1 for SigLIP
-            mask = torch.zeros_like(mask)  # Mask is zero for empty cameras
-            images.append(img)
-            img_masks.append(mask)
+            return group_images, group_masks
 
-        return images, img_masks
+        visual_images, visual_masks = preprocess_group(visual_keys)
+        tactile_images, tactile_masks = preprocess_group(tactile_keys)
+
+        if len(visual_images) + len(tactile_images) == 0:
+            raise ValueError(
+                "At least one image or tactile image input must be present in the batch."
+            )
+
+        return visual_images, visual_masks, tactile_images, tactile_masks
 
     def prepare_action(self, batch):
         """Pad action"""
@@ -1235,11 +1325,13 @@ class PI05Policy(PreTrainedPolicy):
         self.eval()
 
         # Prepare inputs
-        images, img_masks = self._preprocess_images(batch)
+        images, img_masks, tactile_images, tactile_masks = self._preprocess_images(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
         # Sample actions using the model (pass through RTC kwargs, no separate state needed for PI05)
-        actions = self.model.sample_actions(images, img_masks, tokens, masks, **kwargs)
+        actions = self.model.sample_actions(
+            images, img_masks, tactile_images, tactile_masks, tokens, masks, **kwargs
+        )
 
         # Unpad actions to actual action dimension
         original_action_dim = self.config.output_features[ACTION].shape[0]
@@ -1257,13 +1349,15 @@ class PI05Policy(PreTrainedPolicy):
                 - "none": Return per-sample losses of shape (batch_size,) for RA-BC weighting
         """
         # Prepare inputs
-        images, img_masks = self._preprocess_images(batch)
+        images, img_masks, tactile_images, tactile_masks = self._preprocess_images(batch)
         tokens, masks = batch[f"{OBS_LANGUAGE_TOKENS}"], batch[f"{OBS_LANGUAGE_ATTENTION_MASK}"]
 
         actions = self.prepare_action(batch)
 
         # Compute loss (no separate state needed for PI05)
-        losses = self.model.forward(images, img_masks, tokens, masks, actions)
+        losses = self.model.forward(
+            images, img_masks, tactile_images, tactile_masks, tokens, masks, actions
+        )
 
         # Truncate losses to actual action dimensions
         original_action_dim = self.config.output_features[ACTION].shape[0]

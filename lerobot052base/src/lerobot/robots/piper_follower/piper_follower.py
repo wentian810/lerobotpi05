@@ -95,8 +95,11 @@ class PiperFollower(Robot):
 
         # Low-pass filter cache for joint targets (SDK units)
         self._last_joint_targets_sdk = [0] * 6
-        # Smoothing weight: 0.5 = equal weight for current and previous action
-        self._action_smoothing_weight = 0.1
+        # Smoothing weight: 1.0 = no smoothing (direct follow), lower = more smoothing
+        self._action_smoothing_weight = 0.4
+
+        # Gripper target cache for speed-limited following
+        self._last_gripper_target_sdk = 500000  # Start half-open
 
     # ========== Feature Definitions ==========
 
@@ -301,32 +304,29 @@ class PiperFollower(Robot):
         if "gripper.pos" in action:
             gripper_m = action["gripper.pos"]
 
-
             # Apply gripper limits
             if "gripper" in self.config.joint_limits:
                 min_m, max_m = self.config.joint_limits["gripper"]
                 gripper_m = max(min_m, min(max_m, gripper_m))
-            # Convert meters -> 0.001 mm
-
-
-
+            # Convert meters -> 0.001 mm (SDK unit)
             gripper_target = int(float(gripper_m) * 1000 * 1000)
 
+        # --- Speed-limited gripper following ---
+        # Instead of jumping to the leader's target immediately, we limit the
+        # per-step change. This makes the follower gripper close/open more slowly
+        # than the leader, giving finer force control (especially useful for
+        # fragile objects like paper cups).
+        speed_limit = self.config.gripper_speed_limit
+        delta = gripper_target - self._last_gripper_target_sdk
 
+        if delta > speed_limit:
+            gripper_target = self._last_gripper_target_sdk + speed_limit
+        elif delta < -speed_limit:
+            gripper_target = self._last_gripper_target_sdk - speed_limit
+        # else: target is within speed limit, use it directly
 
-
-
-
-        #print(f"gripper_target: {gripper_target}")
-        gripper_msgs = self.piper.GetArmGripperMsgs()
-        if gripper_target >50000:
-            gripper_target_t = gripper_msgs.gripper_state.grippers_angle +3000
-        if gripper_target<=50000 and gripper_target> 10000:
-            gripper_target_t = gripper_msgs.gripper_state.grippers_angle 
-        if gripper_target <= 10000:
-            gripper_target_t = gripper_msgs.gripper_state.grippers_angle -3000
-        #print(gripper_msgs.gripper_state.grippers_angle / 1000.0)
-        gripper_target = gripper_target_t
+        # Update cache for next step
+        self._last_gripper_target_sdk = gripper_target
 
 
 
@@ -349,7 +349,7 @@ class PiperFollower(Robot):
         # 5. Send gripper control
         self.piper.GripperCtrl(
             gripper_angle=gripper_target,
-            gripper_effort=1000,         # Maximum force
+            gripper_effort=self.config.gripper_effort,  # Configurable grasping force
             gripper_code=0x01,           # Enable control
             set_zero=0
         )

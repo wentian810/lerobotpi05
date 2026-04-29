@@ -97,6 +97,16 @@ class ACTPolicy(PreTrainedPolicy):
         else:
             self._action_queue = deque([], maxlen=self.config.n_action_steps)
 
+    def init_rtc_processor(self):
+        """No-op: ACT does not support RTC denoising-loop prefix attention.
+
+        This stub exists so that ACT can run inside the generic RTC evaluation
+        loop (eval_with_real_robot.py) without AttributeError.  The action
+        chunking queue inside ACTPolicy.select_action() / predict_action_chunk()
+        already handles action-horizon management.
+        """
+        self.rtc_processor = None
+
     @torch.no_grad()
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
         """Select a single action given environment observations.
@@ -332,6 +342,39 @@ class ACT(nn.Module):
             # Note: The forward method of this returns a dict: {"feature_map": output}.
             self.backbone = IntermediateLayerGetter(backbone_model, return_layers={"layer4": "feature_map"})
 
+            # Detect visual vs tactile camera indices.
+            self.visual_indices = []
+            self.tactile_indices = []
+            for i, key in enumerate(config.image_features):
+                is_tactile = False
+                if config.tactile_features is not None:
+                    is_tactile = key in config.tactile_features
+                else:
+                    # Auto-detect by common naming patterns
+                    is_tactile = "tactile" in key or "right_wrist" in key
+                if is_tactile:
+                    self.tactile_indices.append(i)
+                else:
+                    self.visual_indices.append(i)
+
+            # Optional: separate lightweight encoder for tactile images.
+            # Tactile images encode pressure/flow, not natural RGB. A pretrained
+            # ResNet on ImageNet has no useful prior for this domain, so we use a
+            # small CNN trained from scratch.
+            if config.tactile_encoder and self.tactile_indices:
+                self.tactile_backbone = nn.Sequential(
+                    nn.Conv2d(3, 32, kernel_size=5, stride=2, padding=2),
+                    nn.ReLU(),
+                    nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+                    nn.ReLU(),
+                    nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+                    nn.ReLU(),
+                    nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1),
+                    nn.ReLU(),
+                    nn.AdaptiveAvgPool2d((5, 5)),
+                )
+                self.tactile_input_proj = nn.Conv2d(128, config.dim_model, kernel_size=1)
+
         # Transformer (acts as VAE decoder when training with the variational objective).
         self.encoder = ACTEncoder(config)
         self.decoder = ACTDecoder(config)
@@ -470,19 +513,43 @@ class ACT(nn.Module):
             # For a list of images, the H and W may vary but H*W is constant.
             # NOTE: If modifying this section, verify on MPS devices that
             # gradients remain stable (no explosions or NaNs).
-            for img in batch[OBS_IMAGES]:
-                cam_features = self.backbone(img)["feature_map"]
-                cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
-                cam_features = self.encoder_img_feat_input_proj(cam_features)
+            if self.config.tactile_encoder and self.tactile_indices:
+                # Visual images -> pretrained ResNet backbone
+                for i in self.visual_indices:
+                    img = batch[OBS_IMAGES][i]
+                    cam_features = self.backbone(img)["feature_map"]
+                    cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
+                    cam_features = self.encoder_img_feat_input_proj(cam_features)
+                    cam_features = einops.rearrange(cam_features, "b c h w -> (h w) b c")
+                    cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> (h w) b c")
+                    encoder_in_tokens.extend(list(cam_features))
+                    encoder_in_pos_embed.extend(list(cam_pos_embed))
 
-                # Rearrange features to (sequence, batch, dim).
-                cam_features = einops.rearrange(cam_features, "b c h w -> (h w) b c")
-                cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> (h w) b c")
+                # Tactile images -> lightweight CNN (no ImageNet pretraining bias)
+                for i in self.tactile_indices:
+                    img = batch[OBS_IMAGES][i]
+                    cam_features = self.tactile_backbone(img)
+                    cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
+                    cam_features = self.tactile_input_proj(cam_features)
+                    cam_features = einops.rearrange(cam_features, "b c h w -> (h w) b c")
+                    cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> (h w) b c")
+                    encoder_in_tokens.extend(list(cam_features))
+                    encoder_in_pos_embed.extend(list(cam_pos_embed))
+            else:
+                # All images share the same ResNet backbone (original behavior)
+                for img in batch[OBS_IMAGES]:
+                    cam_features = self.backbone(img)["feature_map"]
+                    cam_pos_embed = self.encoder_cam_feat_pos_embed(cam_features).to(dtype=cam_features.dtype)
+                    cam_features = self.encoder_img_feat_input_proj(cam_features)
 
-                # Extend immediately instead of accumulating and concatenating
-                # Convert to list to extend properly
-                encoder_in_tokens.extend(list(cam_features))
-                encoder_in_pos_embed.extend(list(cam_pos_embed))
+                    # Rearrange features to (sequence, batch, dim).
+                    cam_features = einops.rearrange(cam_features, "b c h w -> (h w) b c")
+                    cam_pos_embed = einops.rearrange(cam_pos_embed, "b c h w -> (h w) b c")
+
+                    # Extend immediately instead of accumulating and concatenating
+                    # Convert to list to extend properly
+                    encoder_in_tokens.extend(list(cam_features))
+                    encoder_in_pos_embed.extend(list(cam_pos_embed))
 
         # Stack all tokens along the sequence dimension.
         encoder_in_tokens = torch.stack(encoder_in_tokens, axis=0)

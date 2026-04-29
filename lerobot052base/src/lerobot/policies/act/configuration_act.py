@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 
 from lerobot.configs import NormalizationMode, PreTrainedConfig
 from lerobot.optim import AdamWConfig
+from lerobot.optim.schedulers import CosineDecayWithWarmupSchedulerConfig
 
 
 @PreTrainedConfig.register_subclass("act")
@@ -118,6 +119,22 @@ class ACTConfig(PreTrainedConfig):
     # Note: the value used in ACT when temporal ensembling is enabled is 0.01.
     temporal_ensemble_coeff: float | None = None
 
+    # Episode boundary handling.
+    # When action chunking is used, frames near the end of an episode have their future action targets
+    # padded (action_is_pad=True). Dropping the last N frames avoids training on heavily padded chunks,
+    # which is especially helpful for small datasets. For ACT with n_action_steps == chunk_size,
+    # a small value (e.g. chunk_size // 4) is usually sufficient. Set to 0 to keep all frames.
+    drop_n_last_frames: int = 0
+
+    # Tactile sensor support.
+    # If True, tactile images use a separate lightweight CNN encoder instead of
+    # sharing the pretrained ResNet backbone. This avoids domain-mismatch between
+    # ImageNet-pretrained features and pressure/flow data.
+    tactile_encoder: bool = False
+    # Explicit list of tactile image feature keys. If None, auto-detects keys
+    # containing "tactile" or "right_wrist" (common naming for tactile cameras).
+    tactile_features: list[str] | None = None
+
     # Training and loss computation.
     dropout: float = 0.1
     kl_weight: float = 10.0
@@ -126,6 +143,12 @@ class ACTConfig(PreTrainedConfig):
     optimizer_lr: float = 1e-5
     optimizer_weight_decay: float = 1e-4
     optimizer_lr_backbone: float = 1e-5
+
+    # LR scheduler: cosine decay with warmup (recommended for transformer training)
+    # Auto-scales if --steps < scheduler_decay_steps
+    scheduler_warmup_steps: int = 500
+    scheduler_decay_steps: int = 30_000
+    scheduler_decay_lr: float = 1e-6
 
     def __post_init__(self):
         super().__post_init__()
@@ -156,8 +179,13 @@ class ACTConfig(PreTrainedConfig):
             weight_decay=self.optimizer_weight_decay,
         )
 
-    def get_scheduler_preset(self) -> None:
-        return None
+    def get_scheduler_preset(self) -> CosineDecayWithWarmupSchedulerConfig:
+        return CosineDecayWithWarmupSchedulerConfig(
+            peak_lr=self.optimizer_lr,
+            decay_lr=self.scheduler_decay_lr,
+            num_warmup_steps=self.scheduler_warmup_steps,
+            num_decay_steps=self.scheduler_decay_steps,
+        )
 
     def validate_features(self) -> None:
         if not self.image_features and not self.env_state_feature:

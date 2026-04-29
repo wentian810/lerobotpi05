@@ -53,6 +53,17 @@ class PiperFollowerConfigBase:
     # Whether to automatically enable motors on connect
     auto_enable: bool = True
 
+    # ========== Gripper Control ==========
+    # Maximum gripper position change per control step (SDK units: 0.001 mm).
+    # A smaller value makes the gripper close/open more slowly than the leader,
+    # which helps control grasping force. Set to a large value (e.g. 100000)
+    # to disable speed limiting and follow the leader almost instantly.
+    gripper_speed_limit: int = 2000
+
+    # Gripper effort (0-1000). Lower values reduce maximum closing force,
+    # making the gripper gentler on fragile objects like paper cups.
+    gripper_effort: int = 600
+
     # ========== Safety Limits ==========
     # Joint limits in radians for 6 joints + gripper (in meters)
     joint_limits: dict[str, tuple[float, float]] = field(
